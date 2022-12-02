@@ -46,6 +46,8 @@ dataloader = DataLoader(
         pin_memory=True
     )
 
+upsample_model = Upsampling_neck(768)
+upsample_model = upsample_model.to(device)
 #iter()函数生成迭代器
 iter_dataloader, pbar = iter(dataloader), tqdm(range(len(dataloader)))
 print("len(dataloader):",len(dataloader))
@@ -53,10 +55,13 @@ for num_batch in pbar:
     dict_data = next(iter_dataloader)
     print("type(dict_data):",type(dict_data))
     val_img: torch.Tensor = dict_data["img"]  # b x 3 x H x W
-    print("val_img",val_img.shape)
+    print("val_img: ",val_img.shape)
     #val_gt: torch.LongTensor = dict_data["gt"]  # b x H x W
-
-    dt: torch.Tensor = model(val_img.to(device))  # b x n_cats x H x W
-    print("dt_img",dt.shape)
+    val_img = val_img.to(device)
+    dt: torch.Tensor = model(val_img)  # b x n_cats x H x W
+    print("dt_img: ",dt.shape)
+    dt1=upsample_model(dt)
+    print("dt1.size(): ", dt1.size())
     #val_img torch.Size([16, 3, 320, 320]) batchsize:16, RGB:3, H:320,W:320
     #dt_img torch.Size([16, 768, 10, 10])
+    #expect unsampling 为[16,16,80,80] ,dim: 16, h:80,w :80
