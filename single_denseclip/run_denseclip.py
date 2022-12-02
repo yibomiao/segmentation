@@ -24,7 +24,7 @@ encoder_arch: "DeiT-S/16-SIN"  # For an image encoder. ["RN50", "RN50x16", "RN50
 patch_size: 16
 
 # hyperparameters for ReCo/ReCo+ framework
-batch_size: 16
+batch_size: 4
 context_categories=["tree", "sky", "building", "road", "person"]
 #context_elimination: true
 
@@ -46,7 +46,7 @@ model = DenseCLIP(arch_name="RN50x16").to(device)
 
 dataloader = DataLoader(
         dataset=dataset,
-        batch_size=16,
+        batch_size=2,
         num_workers=n_workers,
         pin_memory=True
     )
@@ -56,10 +56,10 @@ upsample_model = upsample_model.to(device)
 
 vqlr=0.0001
 #不在VQ中变换features的维度了
-vqmodel = VectorQuantizedVAE(16, 16, 512).to(device)
+vqmodel = VectorQuantizedVAE(768, 16, 512).to(device)
 optimizer = torch.optim.Adam(vqmodel.parameters(), lr=vqlr)
 
-#iter()函数生成迭代器
+#iter()
 iter_dataloader, pbar = iter(dataloader), tqdm(range(len(dataloader)))
 print("len(dataloader):",len(dataloader))
 for num_batch in pbar:
@@ -71,18 +71,20 @@ for num_batch in pbar:
     val_img = val_img.to(device)
     dt: torch.Tensor = model(val_img)  # b x n_cats x H x W
     print("dt_img",dt.shape)
-    dt1=upsample_model(dt)
-    print("dt1.size(): ", dt1.size())
+    #dt1=upsample_model(dt)
+    #print("dt1.size(): ", dt1.size())
     #val_img torch.Size([16, 3, 320, 320]) batchsize:16, RGB:3, H:320,W:320
     #dt_img torch.Size([16, 768, 10, 10])
     #expect unsampling 为[16,16,80,80] ,dim: 16, h:320,w :320
 
     #train VQ
     optimizer.zero_grad()
-    x_tilde, z_e_x, z_q_x = vqmodel(dt1)
+    x_tilde, z_e_x, z_q_x = vqmodel(dt)
     print("x_tilde.size(): ",x_tilde.size())
+    print("z_e_x.size(): ",z_e_x.size())
+    #torch.Size([2, 768, 1280, 1280])
     # Reconstruction loss
-    loss_recons = F.mse_loss(x_tilde, dt1)
+    loss_recons = F.mse_loss(x_tilde, dt)
     # Vector quantization objective
     loss_vq = F.mse_loss(z_q_x, z_e_x.detach())
     # Commitment objective

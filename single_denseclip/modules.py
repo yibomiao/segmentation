@@ -110,13 +110,18 @@ class ResBlock(nn.Module):
 class VectorQuantizedVAE(nn.Module):
     def __init__(self, input_dim, dim, K=512):
         super().__init__()
+        self.in_dim = input_dim
         self.encoder = nn.Sequential(
-            nn.Conv2d(input_dim, dim, 4, 2, 1),
-            nn.BatchNorm2d(dim),
-            nn.ReLU(True),
-            nn.Conv2d(dim, dim, 4, 2, 1),
-            ResBlock(dim),
-            ResBlock(dim),
+            nn.ConvTranspose2d(self.in_dim, self.in_dim//2, kernel_size=3,stride=2,padding=1,output_padding=1),
+            nn.BatchNorm2d(self.in_dim//2),
+            nn.ConvTranspose2d(self.in_dim//2, self.in_dim//4, kernel_size=3,stride=2,padding=1,output_padding=1),
+            nn.BatchNorm2d(self.in_dim//4),
+            nn.ConvTranspose2d(self.in_dim//4, self.in_dim//12, kernel_size=3,stride=2,padding=1,output_padding=1),
+            nn.BatchNorm2d(self.in_dim//12),
+            nn.ConvTranspose2d(self.in_dim//12, self.in_dim//24, kernel_size=3,stride=2,padding=1,output_padding=1),
+            nn.BatchNorm2d(self.in_dim//24),
+            nn.ConvTranspose2d(self.in_dim//24, self.in_dim//48, kernel_size=3,stride=2,padding=1,output_padding=1),
+            nn.BatchNorm2d(self.in_dim//48),
         )
 
         self.codebook = VQEmbedding(K, dim)
@@ -125,10 +130,19 @@ class VectorQuantizedVAE(nn.Module):
             ResBlock(dim),
             ResBlock(dim),
             nn.ReLU(True),
-            nn.ConvTranspose2d(dim, dim, 4, 2, 1),
+            nn.Conv2d(dim, dim, 3, 2, 1),
             nn.BatchNorm2d(dim),
             nn.ReLU(True),
-            nn.ConvTranspose2d(dim, input_dim, 4, 2, 1),
+            nn.Conv2d(dim, dim, 3, 2, 1),
+            nn.BatchNorm2d(dim),
+            nn.ReLU(True),
+            nn.Conv2d(dim, dim, 3, 2, 1),
+            nn.BatchNorm2d(dim),
+            nn.ReLU(True),
+            nn.Conv2d(dim, dim, 3, 2, 1),
+            nn.BatchNorm2d(dim),
+            nn.ReLU(True),
+            nn.Conv2d(dim, input_dim, 3, 2, 1),
             nn.Tanh()
         )
 
