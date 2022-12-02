@@ -1,9 +1,14 @@
+import sys
+sys.path.append("..")
 import torch
-
-from single_denseclip.dense_clip import DenseCLIP
-from utils.utils import get_dataset
+import torch.nn as nn
+import torch.nn.functional as F
+from dense_clip import DenseCLIP
+from utils.utils import get_dataset,Upsampling_neck
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from modules import VectorQuantizedVAE
+
 
 # directory configurations - change the below three lines as appropriate
 #dir_ckpt: "/users/gyungin/reco/ckpt"  # Change this to your checkpoint directory.
@@ -31,7 +36,7 @@ n_workers=16
 dataset, categories, palette = get_dataset(
         dir_dataset=dir_dataset,
         dataset_name=dataset_name,
-        split="train",
+        split="val",
         dense_clip_arch=dense_clip_arch
     )
 
@@ -48,6 +53,12 @@ dataloader = DataLoader(
 
 upsample_model = Upsampling_neck(768)
 upsample_model = upsample_model.to(device)
+
+vqlr=0.0001
+#不在VQ中变换features的维度了
+vqmodel = VectorQuantizedVAE(16, 16, 512).to(device)
+optimizer = torch.optim.Adam(vqmodel.parameters(), lr=vqlr)
+
 #iter()函数生成迭代器
 iter_dataloader, pbar = iter(dataloader), tqdm(range(len(dataloader)))
 print("len(dataloader):",len(dataloader))
@@ -55,13 +66,30 @@ for num_batch in pbar:
     dict_data = next(iter_dataloader)
     print("type(dict_data):",type(dict_data))
     val_img: torch.Tensor = dict_data["img"]  # b x 3 x H x W
-    print("val_img: ",val_img.shape)
+    print("val_img",val_img.shape)
     #val_gt: torch.LongTensor = dict_data["gt"]  # b x H x W
     val_img = val_img.to(device)
     dt: torch.Tensor = model(val_img)  # b x n_cats x H x W
-    print("dt_img: ",dt.shape)
+    print("dt_img",dt.shape)
     dt1=upsample_model(dt)
     print("dt1.size(): ", dt1.size())
     #val_img torch.Size([16, 3, 320, 320]) batchsize:16, RGB:3, H:320,W:320
     #dt_img torch.Size([16, 768, 10, 10])
-    #expect unsampling 为[16,16,80,80] ,dim: 16, h:80,w :80
+    #expect unsampling 为[16,16,80,80] ,dim: 16, h:320,w :320
+
+    #train VQ
+    optimizer.zero_grad()
+    x_tilde, z_e_x, z_q_x = vqmodel(dt1)
+    print("x_tilde.size(): ",x_tilde.size())
+    # Reconstruction loss
+    loss_recons = F.mse_loss(x_tilde, dt1)
+    # Vector quantization objective
+    loss_vq = F.mse_loss(z_q_x, z_e_x.detach())
+    # Commitment objective
+    loss_commit = F.mse_loss(z_e_x, z_q_x.detach())
+
+    loss = loss_recons + loss_vq +  loss_commit
+    print("loss: ",loss)
+    loss.backward()
+
+    optimizer.step()
