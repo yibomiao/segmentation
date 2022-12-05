@@ -2,10 +2,10 @@
 
 if [ "$#" -eq  "0" ]
    then
-     python3 reco_plus.py \
+     python3 vqseg.py \
      --p_config "configs/reco_plus_cityscapes.yaml"
  else
-     python3 reco_plus.py \
+     python3 vqseg.py \
      --p_config "configs/reco_plus_cityscapes.yaml" \
      --p_state_dict "$1"
 fi
