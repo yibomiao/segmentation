@@ -14,8 +14,10 @@ from joblib.parallel import delayed
 from scipy.optimize import linear_sum_assignment
 from modules import VectorQuantizedVAE
 from utils.crf import batched_crf
+import clip
 
 
+'''
 def hungarian_match(flat_preds, flat_targets, preds_k, targets_k, metric='acc', n_jobs=16):
     assert (preds_k == targets_k)  # one to one
     num_k = preds_k
@@ -33,13 +35,13 @@ def hungarian_match(flat_preds, flat_targets, preds_k, targets_k, metric='acc', 
         res.append((out_c, gt_c))
 
     return res
-
+'''
 
 def majority_vote(flat_preds, flat_targets, preds_k, targets_k, n_jobs=16):
-    print("computing")
+    #print("computing")
     iou_mat = Parallel(n_jobs=n_jobs, backend='multiprocessing')(delayed(get_iou)(
         flat_preds, flat_targets, c1, c2) for c2 in range(targets_k) for c1 in range(preds_k))
-    print("compution end")
+    #print("compution end")
     iou_mat = np.array(iou_mat)
     results = iou_mat.reshape((targets_k, preds_k)).T
     results = np.argmax(results, axis=1)
@@ -76,11 +78,12 @@ class Segmentor(nn.Module):
         self.arch_name = arch_name
         self.feature_extractor = DenseCLIP(self.arch_name)
         self.vqmodel = VectorQuantizedVAE(self.in_dim, self.dim,  self.K)
+        
     
     def forward(self,x,return_all= False):
         with torch.no_grad():
             feature = self.feature_extractor(x)
-
+            print("feature size(): ",feature.size())
         feature_rec, z_e_x, z_q_x, logits = self.vqmodel(feature)
         if return_all:
             return  feature_rec, z_e_x, z_q_x,logits,feature
@@ -103,6 +106,7 @@ class VqSeg:
             device: torch.device = torch.device("cuda:0"),
             palette: Optional[dict] = None,
             dir_ckpt: Optional[str] = None,
+            K: int = 128,
     ):
         self.dataset: Dataset = dataset
         self.dataset_name: str = dataset.name
@@ -110,7 +114,7 @@ class VqSeg:
         if eval_dataset is not None:
             assert dataset.name == eval_dataset.name,\
                 ValueError(f"Train and eval datasets have different names ({dataset.name} != {eval_dataset.name})!")
-        print("dataset.n_categories: ",dataset.n_categories)
+        #print("dataset.n_categories: ",dataset.n_categories)
         self.iter_train: int = iter_train
         self.segmentor: torch.nn.Module = self._build_segmentor(
             n_categories=dataset.n_categories, segmentor_name=segmentor_name, separable_conv=separable_conv
@@ -121,6 +125,7 @@ class VqSeg:
         )
         self.lr_scheduler = self._build_lr_scheduler(optimiser=self.optimiser, scheduler_cfg=scheduler_cfg)
         self.device: torch.device = device
+        self.K = K
         self.n_categories: int = dataset.n_categories
         self.palette: dict = palette
         self.dir_ckpt: str = dir_ckpt
@@ -136,7 +141,7 @@ class VqSeg:
     def _build_segmentor(
             n_categories: int, segmentor_name: str = "mysegmentor", separable_conv: bool = True
     ) -> torch.nn.Module:
-        segmentor = Segmentor(arch_name="RN50x16",K=512,dim=16,in_dim=768)
+        segmentor = Segmentor(arch_name="RN50x16",K=128,dim=16,in_dim=768)
         return segmentor
 
     def _build_optimiser(
@@ -171,7 +176,7 @@ class VqSeg:
     def __call__(
             self,
             iter_log: int = 100,
-            iter_val: int = 100,
+            iter_val: int = 1000,
             batch_size: int = 8,
             n_workers: int = 8
     ) -> None:
@@ -197,6 +202,7 @@ class VqSeg:
 
             # forward
             img: torch.Tensor = dict_data["img"].to(self.device)
+            print("img size:" ,img.size())
             gt: torch.Tensor = dict_data["pseudo_gt"].to(self.device)
             feature_rec, z_e_x, z_q_x, index, feature = self.segmentor(img,return_all = True)
 
@@ -206,17 +212,18 @@ class VqSeg:
             loss_vq = F.mse_loss(z_q_x, z_e_x.detach())
             # Commitment objective
             loss_commit = F.mse_loss(z_e_x, z_q_x.detach())
-
-            loss = loss_recons + loss_vq +  loss_commit
+            beta = 0.25
+            loss = loss_recons + loss_vq +  beta*loss_commit
             self.optimiser.zero_grad()
-            print("loss at {} iteration".format(num_iter), loss)
+            #print("loss at {} iteration".format(num_iter), loss)
             loss.backward()
             self.optimiser.step()
             self.lr_scheduler.step()
 
             # evaluate the model
             #changed
-            if num_iter  == 10:
+            if num_iter == 10:
+            #if num_iter % iter_val == 0:
                 #self.validate(num_iter=num_iter)
                 self.validate(num_iter=num_iter)
 
@@ -303,7 +310,7 @@ class VqSeg:
         dts = np.concatenate(dts)
         gts = np.concatenate(gts)
         print("majority_vote")
-        mapping = majority_vote(dts, gts, 512, self.n_categories, n_jobs=16)
+        mapping = majority_vote(dts, gts, self.K, self.n_categories, n_jobs=16)
         print("mapping.shape: ",mapping.shape)
         #mapping.reshape((-1,320,320))
         #running_score.update(gt, mapping)
@@ -345,7 +352,7 @@ class VqSeg:
 
         dataloader = DataLoader(
             self.eval_dataset,
-            batch_size=1 if self.dataset_name == "kitti_step" else 4,
+            batch_size=1 if self.dataset_name == "kitti_step" else 16,
             num_workers=16,
             pin_memory=True
         )
@@ -353,7 +360,7 @@ class VqSeg:
 
         dts, gts = [], []
         for num_batch in pbar:
-            if(num_batch == 1): break
+            #if(num_batch == 1): break
             dict_data = next(iter_dataloader)
 
             img: torch.Tensor = dict_data["img"].to(self.device)  # b x 3 x H x W
@@ -361,6 +368,8 @@ class VqSeg:
             print("img.size(): ",img.size())
             print("gt.size(): ",gt.shape)
             dt: torch.Tensor = self.segmentor(img)  # b x n_cats x H x W
+            print("dt size: ",dt.size())
+            #dt为logits
             dt_argmax: torch.Tensor = torch.argmax(dt, dim=1)  # b x H x W
             dt_argmax: np.ndarray = dt_argmax.cpu().numpy()  # b x H x W
             #dt_argmax为index
@@ -369,9 +378,15 @@ class VqSeg:
             gts.append(gt.reshape((-1)))
         dts = np.concatenate(dts)
         gts = np.concatenate(gts)
+
+        #计算dts中每个embedding各用了几次
+        count_dict = {}
+        for index in dts:
+            count_dict[index] = count_dict.get(index, 0) + 1
+        print(count_dict)
         print("majority_vote")
-        mapping = majority_vote(dts, gts, 512, self.n_categories, n_jobs=16)
-        print("mapping.shape: ",mapping.shape)
+        mapping = majority_vote(dts, gts, self.K, self.n_categories, n_jobs=16)
+        print("mapping:  ",mapping)
 
         iter_dataloader, pbar = iter(dataloader), tqdm(range(len(dataloader)))
         running_score = RunningScore(self.n_categories)
@@ -382,21 +397,21 @@ class VqSeg:
 
                 img: torch.Tensor = dict_data["img"].to(self.device)  # b x 3 x H x W
                 gt: np.ndarrray = dict_data["gt"].numpy()  # b x H x W
-                #segmentor多返回一个n_cats(512)
+                #dt为logits
                 dt: torch.Tensor = self.segmentor(img)  # b x n_cats x H x W
 
                 dt_argmax: torch.Tensor = torch.argmax(dt, dim=1)  # b x H x W
                 dt_argmax: np.ndarray = dt_argmax.cpu().numpy()  # b x H x W
-                print("dt_argmax shape:",dt_argmax.shape)
+                #print("dt_argmax shape:",dt_argmax.shape)
                 dt_argmax = mapping[dt_argmax]
-                print("dt_argmax shape:",dt_argmax.shape)
+                #print("dt_argmax shape:",dt_argmax.shape)
                 running_score.update(gt, dt_argmax)
 
                 dt_crf_argmax = batched_crf(pool, img, torch.log_softmax(dt, dim=1)).argmax(1).to(self.device)  # b x H x W
                 
                 dt_crf_argmax: np.ndarray = dt_crf_argmax.cpu().numpy()  # b x H x W
                 dt_crf_argmax = mapping[dt_crf_argmax]
-                print("dt_crf_argmax shape:",dt_crf_argmax.shape)
+                #print("dt_crf_argmax shape:",dt_crf_argmax.shape)
                 running_score_crf.update(gt, dt_crf_argmax)
 
                 miou = running_score.get_scores()[0]["Mean IoU"]

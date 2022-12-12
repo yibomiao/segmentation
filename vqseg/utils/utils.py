@@ -102,8 +102,8 @@ def get_dataset(
         dataset = CityscapesDataset(
             dir_dataset=dir_dataset,
             split=split,
-            transform=get_transform(res=320, is_label=False, crop_type=loader_crop),
-            target_transform=get_transform(res=320, is_label=True, crop_type=loader_crop),
+            transform=get_transform(res=224, is_label=False, crop_type=loader_crop),
+            target_transform=get_transform(res=224, is_label=True, crop_type=loader_crop),
             model_name=dense_clip_arch,
             dir_pseudo_masks=dir_pseudo_masks
         )
