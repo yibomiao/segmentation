@@ -1,2 +1,2 @@
 # segmentation
-python run_denseclip.py
+bash vqseg.sh
